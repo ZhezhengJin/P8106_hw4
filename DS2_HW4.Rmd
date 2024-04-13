@@ -1,0 +1,74 @@
+---
+title: "Homework 4"
+author: "Zhezheng Jin"
+output:
+  pdf_document:
+    latex_engine: xelatex
+    toc: yes
+    toc_depth: 2
+  html_document:
+    df_print: paged
+    toc: yes
+    toc_depth: '2'
+header-includes:
+- \usepackage{fancyhdr}
+- \usepackage{lipsum}
+- \pagestyle{fancy}
+- \fancyhead[R]{\thepage}
+- \fancypagestyle{plain}{\pagestyle{fancy}}
+editor_options: 
+  chunk_output_type: console
+--- 
+
+\newpage
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+	echo = TRUE,
+	warning = FALSE,
+	fig.width = 8, 
+  fig.height = 6,
+  out.width = "90%"
+)
+```
+
+```{r, echo = TRUE, message = FALSE, results='hide', warning=FALSE}
+library(tidyverse)
+library(caret)
+library(glmnet)
+library(MASS)
+library(tidymodels)
+library(mlbench)
+library(pROC)
+library(pdp)
+library(vip)
+library(AppliedPredictiveModeling)
+```
+
+```{r}
+# Data Import
+data = read_csv("College.csv") %>%
+janitor::clean_names() %>%
+select(-college) %>%
+relocate(outstate)
+
+# data partition
+set.seed(2358)
+indexTrain <- createDataPartition(y = data$outstate, p = 0.8, list = FALSE)
+train <- data[indexTrain, ]
+test <- data[-indexTrain, ]
+```
+
+The "College" dataset contains `r ncol(data)` columns and `r nrow(data)` observations after omitting the `college` variable. Then we partition the dataset into two parts: training data (80%) and test data (20%), where the training data and test data contains `r nrow(train)` and `r nrow(test)` rows, respectively.
+
+
+
+
+
+
+
+
+
+
+
+
