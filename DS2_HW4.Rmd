@@ -35,40 +35,216 @@ knitr::opts_chunk$set(
 ```{r, echo = TRUE, message = FALSE, results='hide', warning=FALSE}
 library(tidyverse)
 library(caret)
-library(glmnet)
-library(MASS)
-library(tidymodels)
 library(mlbench)
 library(pROC)
 library(pdp)
-library(vip)
-library(AppliedPredictiveModeling)
+library(ISLR)
+library(caret)
+library(rpart)
+library(rpart.plot)
+library(ranger)
+library(tidymodels)
 ```
 
+## 1.College Data
 ```{r}
 # Data Import
 data = read_csv("College.csv") %>%
-janitor::clean_names() %>%
-select(-college) %>%
-relocate(outstate)
+  janitor::clean_names() %>%
+  dplyr::select(-college) %>%
+  relocate(outstate)
 
 # data partition
 set.seed(2358)
-indexTrain <- createDataPartition(y = data$outstate, p = 0.8, list = FALSE)
-train <- data[indexTrain, ]
-test <- data[-indexTrain, ]
+data_split <- initial_split(data, prop = 0.8)
+train <- training(data_split)
+test <- testing(data_split)
 ```
 
-The "College" dataset contains `r ncol(data)` columns and `r nrow(data)` observations after omitting the `college` variable. Then we partition the dataset into two parts: training data (80%) and test data (20%), where the training data and test data contains `r nrow(train)` and `r nrow(test)` rows, respectively.
+The "College" dataset contains `r ncol(data)` columns and `r nrow(data)` observations after omitting the `college` variable.
 
+### a. Regression Tree
+```{r}
+# using caret
+ctrl <- trainControl(method = "cv")
+set.seed(2358)
+rpart.fit <- train(outstate ~ .,
+                   train,
+                   method = "rpart",
+                   tuneGrid = data.frame(cp =  exp(seq(-6,1, length = 100))),
+                   trControl = ctrl)
+plot(rpart.fit, xTrans = log)
 
+# Plot of tree
+rpart.plot(rpart.fit$finalModel)
+```
 
+### b. Random Forest
+```{r}
+# using caret
+rf.grid <- expand.grid(mtry = 1:16,
+                       splitrule = "variance",
+                       min.node.size = 1:6)
+set.seed(2358)
+rf.fit <- train(outstate ~ .,
+                train,
+                method = "ranger",
+                tuneGrid = rf.grid,
+                trControl = ctrl)
 
+ggplot(rf.fit, highlight = TRUE)
 
+# Variable importance
+set.seed(2358)
+rf.final.per <- ranger(outstate ~ .,
+                       train,
+                       mtry = rf.fit$bestTune[[1]],
+                       splitrule = "variance",
+                       min.node.size = rf.fit$bestTune[[3]],
+                       importance = "permutation",
+                       scale.permutation.importance = TRUE)
 
+barplot(sort(ranger::importance(rf.final.per), decreasing = FALSE),
+        las = 2, horiz = TRUE, cex.names = 0.7,
+        col = colorRampPalette(colors = c("cyan", "blue"))(16))
 
+# Test error
+pred.rf <- predict(rf.fit, newdata = test)
+rf.test.error <- RMSE(pred.rf, test$outstate)
+rf.test.error
+```
 
+expend and room_board are the most important variables, followed by apps, terminal, accept,perc_alumni, grad_rate, etc. The test error(RMSE) is `r rf.test.error`.
 
+### c. Boosting
+```{r}
+# using caret
+gbm.grid <- expand.grid(n.trees = c(500,1000,2000,3000,4000,5000),
+                        interaction.depth = 1:5,
+                        shrinkage = c(0.005,0.01),
+                        n.minobsinnode = 1)
+set.seed(2358)
+gbm.fit <- train(outstate ~ .,
+                 train,
+                 method = "gbm",
+                 tuneGrid = gbm.grid,
+                 trControl = ctrl,
+                 verbose = FALSE)
 
+ggplot(gbm.fit, highlight = TRUE)
+
+# Variable importance
+summary(gbm.fit$finalModel, las = 2, cBars = 16, cex.names = 0.6)
+
+# Test error
+pred.gbm <- predict(gbm.fit, newdata = test)
+gbm.test.error <- RMSE(pred.gbm, test$outstate)
+gbm.test.error
+```
+
+expend is the most important variables, followed by room_board, grad_rate, terminal, apps, perc_alumni, etc. The test error(RMSE) is `r gbm.test.error`.
+
+## 2.Auto Data
+```{r}
+# Data Import
+auto <- read_csv("auto.csv") %>%
+  mutate(
+    mpg_cat = as.factor(mpg_cat),
+    origin = factor(origin, levels = 1:3),
+    cylinders = as.factor(cylinders)) 
+
+skimr::skim(auto)
+contrasts(auto$mpg_cat)
+# data partition
+set.seed(2358)
+data_split2 <- initial_split(auto, prop = 0.7)
+train2 <- training(data_split2)
+test2 <- testing(data_split2)
+```
+
+The "auto" dataset contains `r ncol(auto)` variables and `r nrow(auto)` observations.
+
+### a. Classification Tree
+```{r}
+# using rpart
+set.seed(2358)
+tree1 <- rpart(formula = mpg_cat ~ .,
+               data = train2,
+               control = rpart.control(cp = 0))
+
+cpTable <- printcp(tree1)
+
+plotcp(tree1)
+
+# minimum cross-validation error
+minErr <- which.min(cpTable[, "xerror"])
+tree2 <- rpart::prune(tree1, cp = cpTable[minErr, "CP"])
+rpart.plot(tree2)
+
+# 1SE rule
+cp1se <- cpTable[cpTable[, "xerror"] 
+                 <= cpTable[minErr, "xerror"] 
+                 + cpTable[minErr, "xstd"], "CP"][1]
+tree3 <- rpart::prune(tree1, cp = cp1se)
+rpart.plot(tree3)
+```
+
+The optimal tree with two terminal nodes (size 2), chosen based on the lowest cross-validation error, contains only one split, which is determined by the cylinder predictor in category 4 and 5.
+
+The optimal tree, chosen based on 1SE cross-validation error, is the same as the tree size obtained using the
+lowest cross-validation error, which is size 2.
+
+### b. Boosting
+```{r}
+# using caret
+ctrl2 <- trainControl(method = "cv",
+                      classProbs = TRUE,
+                      summaryFunction =twoClassSummary)
+
+gbm.grid2 <- expand.grid(n.trees = c(2000,3000,4000,5000),
+                         interaction.depth = 1:6,
+                         shrinkage = c(0.0005,0.001,0.002),
+                         n.minobsinnode = 1)
+set.seed(2358)
+gbm.fit2 <- train(mpg_cat ~ .,
+                  train2,
+                  method = "gbm",
+                  tuneGrid = gbm.grid2,
+                  trControl = ctrl2,
+                  distribution = "adaboost",
+                  metric = "ROC",
+                  verbose = FALSE)
+
+ggplot(gbm.fit2, highlight = TRUE)
+
+# Variable importance
+summary(gbm.fit2$finalModel, las = 2, cBars = 7, cex.names = 0.6)
+
+# test data performance
+gbm2.pred.prob <- predict(
+  gbm.fit2, newdata = test2, type = "prob")[,2] 
+#  retrieve the second column, which is case="low",positive class for the mpg_cat
+
+## ROC plot
+roc.gbm2 <- roc(test2$mpg_cat, gbm2.pred.prob)
+plot(roc.gbm2, legacy.axes = TRUE,  print.auc = TRUE)
+plot(smooth(roc.gbm2), col = 4, add = TRUE)
+
+## Confusion Matrix
+gbm2.pred <- rep("high", length(gbm2.pred.prob))
+gbm2.pred[gbm2.pred.prob>0.5] <- "low"
+
+confusionMatrix(data = as.factor(gbm2.pred),
+                reference = test2$mpg_cat,
+                positive = "low")
+```
+
+displacement is the most important variables, followed by cylinders4, weight, horsepower, year, etc. 
+
+Test data performance:
+
+The AUC value is 0.975, which means the model's performance on the test data can be considered to be very high.
+
+Based on our confusion matrix analysis, our model's accuracy when applied to test data is 94.07% (95% CI: 88.16% to 97.58%). No information rate is 53.39%, which represents the accuracy if we made the same class prediction for all observations without any information. The p-value is close to 0 which means the accuracy is statistically significantly better than our no information rate. 
 
 
