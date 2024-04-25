@@ -71,7 +71,7 @@ set.seed(2358)
 rpart.fit <- train(outstate ~ .,
                    train,
                    method = "rpart",
-                   tuneGrid = data.frame(cp =  exp(seq(-6,1, length = 100))),
+                   tuneGrid = data.frame(cp =  exp(seq(-8,2, length = 100))),
                    trControl = ctrl)
 plot(rpart.fit, xTrans = log)
 
